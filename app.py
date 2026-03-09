@@ -25,30 +25,31 @@ def match_resume():
             spacy.cli.download("en_core_web_sm")
             nlp = spacy.load("en_core_web_sm")
 
-        # PHASE 1: Smart Extraction (Scalable Structural Heuristic + NER)
+        # PHASE 1: Smart Extraction (Statistical Rarity / TF-IDF Alternative)
         def extract_technical_skills(text):
             doc = nlp(text)
-            skills = set()
-            tech_indicator = []
+            from wordfreq import zipf_frequency
             
-            # Step 1: Identify strictly capitalized/acronym technical words
+            # Step 1: Capitalization Structural Check
+            tech_indicator = []
             for token in doc:
-                if token.is_stop or token.is_punct or len(token.text) <= 1:
-                    tech_indicator.append((False, ""))
+                if token.is_stop or token.is_punct or len(token.lemma_) <= 2:
+                    if len(tech_indicator) > 0 and tech_indicator[-1][0]: 
+                        tech_indicator.append((False, ""))
                     continue
-                    
-                is_acronym = token.text.isupper() and len(token.text) > 1
-                is_propn = token.pos_ in ['PROPN', 'NOUN']
+
+                word = token.text
+                is_acronym = word.isupper() and len(word) > 1
+                is_mixed_case = any(c.isupper() for c in word[1:])
                 is_title = token.is_title and not token.is_sent_start
+                is_noun = token.pos_ in ['PROPN', 'NOUN']
                 
-                # Only extract if it's grammatically a noun/pronoun, or an acronym
-                if is_acronym or (is_propn and is_title):
-                    word = token.text.lower() if is_acronym else token.lemma_.lower()
+                if (is_acronym or is_mixed_case or is_title) and is_noun:
                     tech_indicator.append((True, word))
                 else:
                     tech_indicator.append((False, ""))
 
-            # Step 2: Extract contiguous multi-word phrases (e.g., "Jetpack Compose")
+            # Step 2: Phrase Contiguity
             raw_phrases = []
             current_phrase = []
             for is_tech, word in tech_indicator:
@@ -60,28 +61,25 @@ def match_resume():
                     current_phrase = []
             if len(current_phrase) > 0:
                 raw_phrases.append(" ".join(current_phrase))
-                
-            # Step 3: Named Entity Recognition Filtering
-            # Job Titles, Companies, and Locations get classified by spaCy as entities. 
-            # We filter out any phrase that overlaps with an ORG, PERSON, or GPE tag.
-            invalid_entities = [ent.text.lower() for ent in doc.ents if ent.label_ in ['PERSON', 'ORG', 'GPE']]
-            
-            # Plus a tiny fallback for exact job titles that are sometimes misclassified by the "Small" model
-            fallback_ignore = {"senior", "junior", "engineer", "developer", "manager", "lead"}
-            
+                        
+            # Step 3: Statistical Rarity Mathematical Filter (Option 2)
+            # We completely bypass maintaining a hardcoded "ignore list" of Marketing Fluff and Job Titles!
+            # Instead, we mathematically calculate how rare the word is in the English language.
+            final_skills = set()
             for phrase in raw_phrases:
-                phrase_lower = phrase.lower()
+                words = phrase.split()
+                # A Zipf frequency evaluates rarity. >4.5 is common English. <4.0 is extremely rare domain logic.
+                avg_zipf = sum(zipf_frequency(w.lower(), 'en') for w in words) / len(words)
                 
-                # Check 1: Does it match a recognized Entity? (e.g., "Google" -> ORG)
-                is_entity = any(phrase_lower in ent or ent in phrase_lower for ent in invalid_entities)
+                # We unconditionally keep exact Acronyms (e.g. MVP, REST) and MixedCase logic (OkHttp, GraphQL)
+                has_acronym = any(w.isupper() for w in words)
+                has_mixed = any(any(c.isupper() for c in w[1:]) for w in words)
                 
-                # Check 2: Does the phrase contain a known title keyword?
-                has_title_word = any(title_word in phrase_lower.split() for title_word in fallback_ignore)
-                
-                if not is_entity and not has_title_word:
-                    skills.add(phrase)
+                # If a phrase is composed entirely of common English words (avg Zipf > 4.3), we drop it.
+                if avg_zipf < 4.3 or has_acronym or has_mixed:
+                    final_skills.add(phrase.lower())
                     
-            return list(skills)
+            return list(final_skills)
 
         resume_terms = extract_technical_skills(resume_text)
         jd_terms = extract_technical_skills(jd_text)
