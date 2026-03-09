@@ -71,10 +71,6 @@ def match_resume():
         # Pre-process the resume string for RapidFuzz
         resume_str = " ".join(resume_terms)
 
-        
-        # Pre-process word vectors for semantic matching
-        resume_doc = nlp(resume_str)
-
         # PHASE 2: Importance Weighting (Frequency Counting)
         # We count the frequency of each extracted term in the JD to weigh its importance
         from collections import Counter
@@ -99,27 +95,11 @@ def match_resume():
                 matched_weight += weight
                 continue
                 
-            # PHASE 4: Semantic Vector Match (e.g. "Neural Networks" vs "Machine Learning")
-            jd_word_vec = nlp(jd_word)
-            highest_semantic_sim = 0.0
-            
-            # Only calculate if the word actually has a known vector representation in English
-            if jd_word_vec.has_vector and resume_terms:
-                # Compare against the unique parsed resume terms, not the massive raw document
-                for term in set(resume_terms):
-                    resume_word_vec = nlp(term)
-                    if resume_word_vec.has_vector:
-                        sim = jd_word_vec.similarity(resume_word_vec)
-                        if sim > highest_semantic_sim:
-                            highest_semantic_sim = sim
-            
-            # If the vectors are 70%+ identical conceptually, issue a partial matching score!
-            if highest_semantic_sim > 0.70:
-                matched_weight += (weight * highest_semantic_sim) # Partial points
-            else:
-                missing_candidates[jd_word] = weight
+            # If no exact or fuzzy match, it's missing! 
+            # (Note: Neural/Semantic math was stripped out to fit Render.com 512MB RAM limits)
+            missing_candidates[jd_word] = weight
 
-        # PHASE 5: Weighted Scoring
+        # PHASE 4: Weighted Scoring
         match_percentage = round((matched_weight / total_weight) * 100, 2)
 
         # Sort missing candidates by highest weight, keep top 15
