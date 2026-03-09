@@ -25,44 +25,62 @@ def match_resume():
             spacy.cli.download("en_core_web_sm")
             nlp = spacy.load("en_core_web_sm")
 
-        # PHASE 1: Smart Extraction (Scalable Structural Heuristic)
+        # PHASE 1: Smart Extraction (Scalable Structural Heuristic + NER)
         def extract_technical_skills(text):
             doc = nlp(text)
             skills = set()
-            
             tech_indicator = []
             
+            # Step 1: Identify strictly capitalized/acronym technical words
             for token in doc:
-                # 1. Ignore standard stop words and punctuation immediately
                 if token.is_stop or token.is_punct or len(token.text) <= 1:
                     tech_indicator.append((False, ""))
                     continue
                     
-                # 2. Check Structural Heuristics
                 is_acronym = token.text.isupper() and len(token.text) > 1
-                is_propn = token.pos_ == 'PROPN'
+                is_propn = token.pos_ in ['PROPN', 'NOUN']
                 is_title = token.is_title and not token.is_sent_start
                 
-                if is_acronym or is_propn or is_title:
-                    # Use lower text for acronyms, lemma for others
+                # Only extract if it's grammatically a noun/pronoun, or an acronym
+                if is_acronym or (is_propn and is_title):
                     word = token.text.lower() if is_acronym else token.lemma_.lower()
                     tech_indicator.append((True, word))
                 else:
                     tech_indicator.append((False, ""))
 
-            # 3. Extract contiguous multi-word phrases (e.g., "Jetpack Compose", "Android SDK")
+            # Step 2: Extract contiguous multi-word phrases (e.g., "Jetpack Compose")
+            raw_phrases = []
             current_phrase = []
             for is_tech, word in tech_indicator:
                 if is_tech:
                     current_phrase.append(word)
                 else:
                     if len(current_phrase) > 0:
-                        skills.add(" ".join(current_phrase))
+                        raw_phrases.append(" ".join(current_phrase))
                     current_phrase = []
-                    
             if len(current_phrase) > 0:
-                skills.add(" ".join(current_phrase))
-                        
+                raw_phrases.append(" ".join(current_phrase))
+                
+            # Step 3: Named Entity Recognition Filtering
+            # Job Titles, Companies, and Locations get classified by spaCy as entities. 
+            # We filter out any phrase that overlaps with an ORG, PERSON, or GPE tag.
+            invalid_entities = [ent.text.lower() for ent in doc.ents if ent.label_ in ['PERSON', 'ORG', 'GPE']]
+            
+            # Plus a tiny fallback for exact job titles that are sometimes misclassified by the "Small" model
+            fallback_ignore = {"senior", "junior", "engineer", "developer", "manager", "lead"}
+            
+            for phrase in raw_phrases:
+                phrase_lower = phrase.lower()
+                
+                # Check 1: Does it match a recognized Entity? (e.g., "Google" -> ORG)
+                is_entity = any(phrase_lower in ent or ent in phrase_lower for ent in invalid_entities)
+                
+                # Check 2: Does the phrase contain a known title keyword?
+                has_title_word = any(title_word in phrase_lower.split() for title_word in fallback_ignore)
+                
+                if not is_entity and not has_title_word:
+                    skills.add(phrase)
+                    
             return list(skills)
 
         resume_terms = extract_technical_skills(resume_text)
@@ -102,9 +120,18 @@ def match_resume():
         # PHASE 4: Weighted Scoring
         match_percentage = round((matched_weight / total_weight) * 100, 2)
 
-        # Sort missing candidates by highest weight, keep top 15
+        # Sort missing candidates by highest weight, keep top 15 unique words
         sorted_missing = [word for word, weight in sorted(missing_candidates.items(), key=lambda x: x[1], reverse=True)]
-        missing_keywords = sorted_missing[:15]
+        
+        # Deduplicate while preserving order
+        seen = set()
+        missing_keywords = []
+        for word in sorted_missing:
+            if word not in seen:
+                seen.add(word)
+                missing_keywords.append(word)
+            if len(missing_keywords) == 15:
+                break
 
         return jsonify({
             "match_percentage": match_percentage,
