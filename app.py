@@ -17,13 +17,13 @@ def match_resume():
         import spacy
         from rapidfuzz import fuzz
 
-        # Load the Medium English model which includes Word Vectors
+        # Load the Small English model to fit in Render 512MB RAM limit
         try:
-            nlp = spacy.load("en_core_web_md")
+            nlp = spacy.load("en_core_web_sm")
         except OSError:
             import spacy.cli
-            spacy.cli.download("en_core_web_md")
-            nlp = spacy.load("en_core_web_md")
+            spacy.cli.download("en_core_web_sm")
+            nlp = spacy.load("en_core_web_sm")
 
         # PHASE 1: Smart Extraction (Scalable Structural Heuristic)
         def extract_technical_skills(text):
